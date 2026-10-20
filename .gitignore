@@ -1,0 +1,8 @@
+# Only the README is tracked on purpose.
+# Everything else (source, tests, docs, local state) stays in the working copy.
+*.md
+*.pyc
+__pycache__/*
+
+# never ignore the readme
+!README.md

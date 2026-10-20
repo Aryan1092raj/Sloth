@@ -1,0 +1,15 @@
+From: Priya Nair <priya@example.org>
+To: Ben Alvarez <ben@example.org>
+Date: Mon, 19 Oct 2026 08:02
+Subject: Re: Q3 numbers for the board pack
+
+Hi Ben,
+
+The finance approval for the October invoice is still pending. Please follow up with
+them before Friday, otherwise the payment window closes and we lose the discount.
+
+Also, the board pack needs the Q3 numbers by Wednesday. The template is on the shared
+drive, please use the same layout as Q2 so nobody has to reformat it.
+
+Thanks,
+Priya

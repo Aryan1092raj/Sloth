@@ -1,0 +1,11 @@
+[2026-10-19 09:12] Ana: morning! did the invoice for October go out?
+[2026-10-19 09:14] Ben: not yet, waiting on finance approval. should be tomorrow.
+[2026-10-19 09:15] Ana: please chase finance today, the payment window closes friday
+[2026-10-19 09:16] Ben: ok, I will ping Priya now
+[2026-10-19 09:31] Carla: heads up, the venue changed for friday dinner. new place is "Olive & Thyme" on 4th street
+[2026-10-19 09:33] Dan: wow that is far. can you book a table for 8 at 8pm?
+[2026-10-19 09:40] Carla: yes I will check availability tonight and book it
+[2026-10-19 10:02] Ben: reminded: need to send the Q3 numbers to the board before wednesday
+[2026-10-19 10:05] Ana: thanks. also we need to renew the domain, it expires on the 30th
+[2026-10-19 10:06] Dan: on it, I will handle the renewal this week
+[2026-10-19 23:51] Ana: good night everyone
