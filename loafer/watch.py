@@ -144,12 +144,12 @@ def watch(cfg: Config, analyzer: Analyzer, *, once: bool = False, use_inotify: b
     folders = [cfg.input_dir] + [p for p in cfg.input_dir.rglob("*") if p.is_dir()] if cfg.input_dir.exists() else []
     fd = inotify_watch(folders) if use_inotify else None
     mode = "inotify" if fd is not None else "polling"
-    print(f"loafer watching {cfg.input_dir} ({mode}, {cfg.interval}s fallback, ctrl-c to stop)")
+    print(f"loafer watching {cfg.input_dir} ({mode}, {cfg.interval}s fallback, ctrl-c to stop)", flush=True)
     while True:
         merged = run_once(cfg, analyzer, state)
         path = write_daily(cfg, merged, analyzer)
         count = len(merged.get("new_files", []))
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] {count} new file(s) -> {path}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] {count} new file(s) -> {path}", flush=True)
         if once:
             return 0
         try:
@@ -158,5 +158,5 @@ def watch(cfg: Config, analyzer: Analyzer, *, once: bool = False, use_inotify: b
             else:
                 time.sleep(cfg.interval)
         except KeyboardInterrupt:
-            print("sleeping now.")
+            print("sleeping now.", flush=True)
             return 0

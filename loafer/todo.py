@@ -57,11 +57,19 @@ def load_done(out_dir: Path) -> set[str]:
 
 
 def save_done(out_dir: Path, items: list[str]) -> set[str]:
-    done = load_done(out_dir) | {item.lower() for item in items}
+    done = load_done(out_dir) | {base_item(item).lower() for item in items}
     path = done_path(out_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"done": sorted(done)}, indent=2), encoding="utf-8")
     return done
+
+
+def base_item(item: str) -> str:
+    """The item without its source attribution, so "renew it (chat.txt)" and "renew it" match."""
+    text = item.strip()
+    if text.endswith(")") and " (" in text:
+        text = text[: text.rfind(" (")].strip()
+    return text
 
 
 def open_items(text: str, done: set[str] | None = None) -> list[str]:
@@ -74,8 +82,8 @@ def open_items(text: str, done: set[str] | None = None) -> list[str]:
         if not stripped.startswith(UNCHECKED.strip()):
             continue
         item = stripped[len(UNCHECKED.strip()):].strip()
-        key = item.lower()
-        if key in done or key in seen:
+        key = base_item(item).lower()
+        if not key or key in done or key in seen:
             continue
         seen.add(key)
         items.append(item)

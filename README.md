@@ -15,14 +15,15 @@ It is named after the animal that does nothing all day and somehow gets the job 
 
 ```bash
 loafer digest --input ~/exports/chat    # read a folder of chat/email exports, write one digest
-loafer watch  --input ~/exports/chat    # poll the folder, keep one digest file for the whole night
-loafer grocery fridge.jpg                # photo of the fridge -> shopping list of what is missing
+loafer watch  --input ~/exports/chat    # keep one digest file for the whole night, wake on new mail
 loafer todo                             # what is still open in the latest digest
 loafer done "renew domain"              # tick an item off, and remember that you did
+loafer history "invoice"                # search every digest you have ever written
+loafer grocery fridge.jpg                # photo of the fridge -> shopping list of what is missing
 loafer doctor                           # what is running locally, and is it reachable
 ```
 
-No web UI. No account. No API key. No pip install - the whole thing is the Python 3
+No web UI. No account. No API key. No pip install needed - the whole thing is the Python 3
 standard library.
 
 ## Why open-source AI, for this project
@@ -59,7 +60,12 @@ ollama pull qwen3:0.6b             # 522 MB, Apache-2.0 weights
 python3 -m loafer doctor           # check the wiring
 ```
 
-No dependencies to install. `python3 -m loafer` is the entry point.
+No dependencies to install. `python3 -m loafer` is the entry point. If you would rather have
+a `loafer` command on your PATH:
+
+```bash
+pipx install .                     # or: pip install .
+```
 
 For the vision command you also want a vision model:
 
@@ -77,6 +83,9 @@ python3 -m loafer digest --input examples --out ~/loafer/digests
 python3 -m loafer digest --input ~/exports/chat --since 8h
 python3 -m loafer digest --input ~/exports/chat --since yesterday
 
+# trade speed for care
+python3 -m loafer digest --input ~/exports/chat --quality deep
+
 # leave it running overnight, it only reads new or changed files
 python3 -m loafer watch --input ~/exports/chat --out ~/loafer/digests --interval 300
 
@@ -86,6 +95,13 @@ python3 -m loafer grocery fridge.jpg
 # close the loop: what is still open, then tick it off
 python3 -m loafer todo
 python3 -m loafer done "renew domain"
+
+# send the open items to whatever todo tool you use
+python3 -m loafer todo --export ~/todo.md
+
+# look back
+python3 -m loafer history
+python3 -m loafer history "invoice"
 ```
 
 `--since` takes a duration (`30m`, `6h`, `2d`), a word (`today`, `yesterday`, `now`) or a
@@ -103,11 +119,11 @@ The template is shared, so the user should use it as instructed.
 
 ## To do
 
-- [ ] confirm finance approval pending
-- [ ] send Q3 numbers by Wednesday
-- [ ] check availability
-- [ ] book table
-- [ ] renew domain
+- [ ] confirm finance approval (email-thread.txt)
+- [ ] send Q3 numbers by Wednesday (email-thread.txt)
+- [ ] check availability (team-chat.txt)
+- [ ] book table (team-chat.txt)
+- [ ] renew domain (team-chat.txt)
 
 ## Threads
 
@@ -128,7 +144,9 @@ Topics: finance, board pack
 ```
 
 `watch` writes the same file shape to `~/loafer/digests/YYYY-MM-DD.md` and keeps rewriting
-it, so one file at 7am holds everything that landed overnight.
+it, so one file at 7am holds everything that landed overnight. On Linux it uses inotify, so
+it reacts to a new export in under a second instead of waiting out the interval; anywhere
+else it falls back to polling.
 
 ### The loop
 
@@ -137,9 +155,9 @@ A checklist is only useful if you can act on it, so the digest doubles as a todo
 ```bash
 $ loafer todo
 open items in ~/loafer/digests/2026-10-20.md
-- [ ] confirm finance approval
-- [ ] send Q3 numbers by Wednesday
-- [ ] book table
+- [ ] confirm finance approval (email-thread.txt)
+- [ ] send Q3 numbers by Wednesday (email-thread.txt)
+- [ ] book table (team-chat.txt)
 
 $ loafer done "book table"
 ticked 1 item(s) in ~/loafer/digests/2026-10-20.md
@@ -149,28 +167,48 @@ ticked 1 item(s) in ~/loafer/digests/2026-10-20.md
 Ticks live in `~/loafer/digests/.loafer-done.json`, not in the digest, because `watch`
 rewrites the daily digest whenever new mail lands and would wipe them.
 
+### Search your own history
+
+Every digest is a markdown file, so every digest is searchable:
+
+```bash
+$ loafer history
+2026-10-20.md                     2026-10-20 23:33  11 open
+digest-2026-10-19-0812.md         2026-10-19 08:12   4 open
+
+$ loafer history "invoice"
+digest-2026-10-19-0812.md:19: Priya is confirming the finance approval for the October invoice.
+1 match(es)
+```
+
+No vector database, no embeddings, no index to maintain. `grep` would do the same thing;
+this just knows where your digests live.
+
 ## How it works
 
 ```
   exports/*.txt
         |
         v
-   collect.py  -- find text files, skip hidden dirs, skip the output dir, cap the size
+   collect.py  -- find text files, skip hidden dirs, skip the output dir, cap the size,
+        |        filter by --since on mtime
+        v
+   digest.py   -- split long files into overlapping chunks, one prompt per chunk
         |
         v
-   llm.py      -- one JSON-only prompt per file, then one merge prompt
+   llm.py      -- one JSON-only prompt per piece, then one merge prompt
         |         (Ollama / llama.cpp on localhost)
         |         |  malformed reply?
         |         v
         |     fallback.py -- stdlib extractive summary + cue-based action detection
         v
-   digest.py   -- two-line summary, checklist, per-thread breakdown -> markdown
+   digest.py   -- two-line summary, checklist with sources, per-thread breakdown -> markdown
         |
         v
    ~/loafer/digests/2026-10-20.md
 ```
 
-Four rules the code follows:
+Five rules the code follows:
 
 1. **Degrade, never crash.** If the model is unreachable, the backend is a pure-stdlib
    extractive summariser. If the model replies with prose instead of JSON, the parser
@@ -178,10 +216,30 @@ Four rules the code follows:
 2. **The model is a component, not a dependency.** `pick_analyzer()` tries Ollama, then any
    llama.cpp OpenAI-compatible server, then the stdlib fallback. `LLMAnalyzer` and
    `HeuristicAnalyzer` implement the same three methods.
-3. **No dependencies.** Standard library only: `urllib`, `json`, `pathlib`, `argparse`,
-   `re`, `collections`. Nothing to `pip install`, nothing to break on a new laptop.
-4. **Boring on purpose.** Polling instead of inotify, JSON files instead of a database, one
-   file per day instead of a feed.
+3. **Nothing is silently dropped.** A long export is split into overlapping chunks and every
+   chunk is analysed, instead of truncating at the first 6000 characters.
+4. **No dependencies.** Standard library only: `urllib`, `json`, `pathlib`, `argparse`,
+   `re`, `collections`, `select`, `ctypes`. Nothing to `pip install`, nothing to break on a
+   new laptop.
+5. **Boring on purpose.** JSON files instead of a database, one file per day instead of a
+   feed, `grep` instead of a search index.
+
+### Quality presets
+
+A preset picks a model, a temperature and a token budget. The model is a *preference*: if
+it is not installed locally, Loafer uses the closest model that is, so the command still
+works on a machine with less VRAM.
+
+| Preset | Prefers | Tokens | Chunking | For |
+| --- | --- | --- | --- | --- |
+| `fast` | `qwen3:0.6b` | 300 | no | a quick look, CPU only, huge inboxes |
+| `balanced` (default) | `qwen3:1.7b` | 400 | yes | the normal case |
+| `deep` | `qwen3:4b` | 800 | yes | slow, careful, when the wording matters |
+
+```bash
+loafer digest --input exports --quality deep
+LOAFER_QUALITY=fast loafer watch --input exports
+```
 
 ### Configuration
 
@@ -192,13 +250,17 @@ then the default.
 | --- | --- | --- |
 | `LOAFER_INPUT` | `~/loafer/inbox` | folder to read |
 | `LOAFER_OUT` | `~/loafer/digests` | where digests are written |
-| `LOAFER_MODEL` | `qwen3:0.6b` | model tag, or llama.cpp model id |
+| `LOAFER_MODEL` | from the preset | model tag, or llama.cpp model id |
+| `LOAFER_QUALITY` | `balanced` | `fast`, `balanced`, `deep` |
 | `LOAFER_BACKEND` | `auto` | `auto`, `ollama`, `llamacpp`, `heuristic` |
 | `LOAFER_OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama endpoint |
 | `LOAFER_LLAMACPP_URL` | `http://127.0.0.1:8080/v1` | llama.cpp endpoint |
 | `LOAFER_VL_MODEL` | `qwen2.5vl:3b` | vision model for `grocery` |
 | `LOAFER_STAPLES` | 12 staples | comma separated list for `grocery` |
 | `LOAFER_INTERVAL` | `300` | seconds between polls in `watch` |
+| `LOAFER_SINCE` | none | ignore anything older than this |
+
+`loafer doctor --json` prints the same picture for scripts.
 
 ### Swapping the model
 
@@ -229,8 +291,9 @@ them. Nothing in the code knows or cares which weights are behind the endpoint.
   list as a starting point, not a verified stock take.
 - **Exports, not live capture.** WhatsApp, Telegram, Slack and Discord all export text;
   Loafer reads those files. It does not talk to the apps.
-- **Polling.** `watch` checks the folder every `LOAFER_INTERVAL` seconds. Cheap, portable,
-  and it costs a stat call. inotify would be nicer and is not portable.
+- **One merge pass.** Everything is merged in a single prompt, so a very large inbox is
+  merged from the 60 most recent records. Raise the cap in `digest.build_digest` if you
+  want more.
 - **Prompt injection.** A chat export is untrusted input. A sufficiently determined export
   could try to talk the model into ignoring the instructions. Loafer's answer is that the
   output is a reading aid and the parse is JSON-only, but this is not fully defended.
@@ -239,25 +302,22 @@ them. Nothing in the code knows or cares which weights are behind the endpoint.
 
 ```text
 Sloth/
-  loafer/            the package: cli, config, collect, llm, fallback, digest, watch, grocery
-  tests/             16 unittest cases, stdlib only, no network
+  loafer/            the package: cli, config, collect, llm, fallback, digest, watch, todo, history, grocery
+  tests/             35 unittest cases, stdlib only, no network
   examples/          a chat export and an email thread to try it on
-  PRD.md             what it is for, who it is for, what is out of scope
-  TRD.md             functional and non-functional requirements, interfaces, failure modes
-  architecture.md    components, data flow, trade-offs, extension points
+  pyproject.toml     zero dependencies, installs a `loafer` command
+  README.md          this file
 ```
 
-The source, tests and design documents are kept in the working copy and out of git on
-purpose; this README is the published surface.
+The design documents (`PRD.md`, `TRD.md`, `architecture.md`) live in the working copy and are
+kept out of git on purpose; this README is the published surface.
 
 ## Roadmap
 
-- inotify instead of polling on Linux
+- write ticked items back into a plain markdown todo file on every digest, not on demand
 - per-thread digests that accumulate into a searchable local history
-- a `--since` filter so a morning digest can cover "since I went to bed"
-- a bigger local model profile (`LOAFER_MODEL=qwen3:8b`) with a quality preset
-- an optional round-trip: write ticked items back into a plain markdown todo file, so the
-  loop can end somewhere other than Loafer
+- an `--email` mode that reads a local maildir export instead of a folder of text files
+- optional round-trip: mark a promise as done in the source app if it exposes an API
 
 ## License
 

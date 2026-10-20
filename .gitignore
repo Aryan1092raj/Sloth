@@ -6,3 +6,8 @@ __pycache__/*
 
 # never ignore the readme
 !README.md
+
+# build artifacts
+build/
+dist/
+*.egg-info/
