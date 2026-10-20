@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from loafer import collect, digest, fallback, history, todo, watch  # noqa: E402
+from loafer import ask, collect, digest, fallback, history, todo, watch  # noqa: E402
 from loafer.config import load_config  # noqa: E402
 from loafer.llm import HeuristicAnalyzer, LLMAnalyzer, extract_json, normalize  # noqa: E402
 
@@ -311,6 +311,97 @@ class TestPresets(unittest.TestCase):
     def test_explicit_model_beats_the_preset(self):
         cfg = load_config(quality="deep", model="qwen2.5vl:3b")
         self.assertEqual(cfg.model, "qwen2.5vl:3b")
+
+
+class TestLocalOnly(unittest.TestCase):
+    def test_local_hosts_are_allowed(self):
+        from loafer.llm import ensure_local
+        ensure_local("http://127.0.0.1:11434")
+        ensure_local("http://localhost:8080/v1")
+        ensure_local("http://127.5.5.5:11434")
+
+    def test_remote_hosts_are_refused(self):
+        from loafer.llm import BackendError, ensure_local
+        with self.assertRaises(BackendError):
+            ensure_local("https://api.openai.com")
+        with self.assertRaises(BackendError):
+            ensure_local("https://huggingface.co")
+
+    def test_remote_can_be_allowed_on_purpose(self):
+        import os
+        from loafer.llm import ensure_local
+        old = os.environ.get("LOAFER_ALLOW_REMOTE")
+        os.environ["LOAFER_ALLOW_REMOTE"] = "1"
+        try:
+            ensure_local("https://api.example.com")
+        finally:
+            if old is None:
+                os.environ.pop("LOAFER_ALLOW_REMOTE", None)
+            else:
+                os.environ["LOAFER_ALLOW_REMOTE"] = old
+
+
+class TestAsk(unittest.TestCase):
+    def test_windows_cover_the_document(self):
+        text = "".join(f"line {i} of a conversation\n" for i in range(60))
+        found = ask.windows(text)
+        self.assertGreater(len(found), 1)
+        self.assertEqual(found[0][0], 1)
+        self.assertIn("line 59", found[-1][1])
+
+    def test_windows_terminate_on_a_short_document(self):
+        self.assertEqual(len(ask.windows("one line")), 1)
+
+    def test_rank_finds_the_relevant_chunk(self):
+        docs = [
+            (Path("a.txt"), 1, "we need to renew the domain before it expires"),
+            (Path("b.txt"), 1, "the weather is nice today"),
+        ]
+        hits = ask.rank("renew the domain", docs)
+        self.assertTrue(hits)
+        self.assertEqual(hits[0][0].name, "a.txt")
+
+    def test_rank_with_nothing_to_find(self):
+        self.assertEqual(ask.rank("", [(Path("a.txt"), 1, "text")]), [])
+
+    def test_heuristic_analyzer_has_no_answer(self):
+        self.assertEqual(HeuristicAnalyzer().answer("anything"), "")
+
+    def test_refusals_are_detected(self):
+        self.assertTrue(ask.is_refusal("The excerpts do not contain the answer."))
+        self.assertTrue(ask.is_refusal("there is no mention of that"))
+        self.assertFalse(ask.is_refusal("We promised to renew the domain."))
+
+
+class TestRecurring(unittest.TestCase):
+    def test_promises_that_keep_coming_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            for day in ("2026-10-18", "2026-10-19", "2026-10-20"):
+                (out / f"{day}.md").write_text("- [ ] renew the domain (team-chat.txt)\n")
+            (out / "2026-10-20.md").write_text(
+                "- [ ] renew the domain (team-chat.txt)\n- [ ] one off (chat.txt)\n"
+            )
+            rows = history.recurring(out, min_appearances=2)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["item"], "renew the domain")
+            self.assertEqual(rows[0]["days"], 3)
+            self.assertEqual(rows[0]["files"], ["team-chat.txt"])
+
+    def test_nothing_recurring(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            (out / "2026-10-20.md").write_text("- [ ] one off (chat.txt)\n")
+            self.assertEqual(history.recurring(out, min_appearances=2), [])
+
+
+class TestSlackFormat(unittest.TestCase):
+    def test_headings_become_bold(self):
+        text = digest.to_slack("# Title\n## Section\n### Sub\n- item")
+        self.assertIn("*Title*", text)
+        self.assertIn("*Section*", text)
+        self.assertIn("*Sub*", text)
+        self.assertNotIn("##", text)
 
 
 if __name__ == "__main__":

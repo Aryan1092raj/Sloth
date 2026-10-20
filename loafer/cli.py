@@ -8,8 +8,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import __version__, collect, digest, grocery, history, todo, watch as watch_mod
-from .config import QUALITY_PRESETS, load_config
+from . import __version__, ask, collect, digest, grocery, history, todo, watch as watch_mod
+from .config import CONFIG_FILE, QUALITY_PRESETS, load_config
 from .llm import BackendError, OllamaBackend, pick_analyzer
 
 
@@ -29,6 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     dg.add_argument("--backend", choices=["auto", "ollama", "llamacpp", "heuristic"])
     dg.add_argument("--file", action="append", default=[], help="digest this exact file (repeatable)")
     dg.add_argument("--since", help="only files touched since: 30m, 6h, 2d, today, yesterday, YYYY-MM-DD")
+    dg.add_argument("--format", choices=["markdown", "slack"], default="markdown", help="output style")
     dg.add_argument("--json", action="store_true", help="print raw json instead of markdown")
 
     wt = sub.add_parser("watch", help="keep an eye on the inbox and refresh the daily digest")
@@ -56,6 +57,23 @@ def build_parser() -> argparse.ArgumentParser:
     dn.add_argument("needle", help="text that identifies the item")
     dn.add_argument("--out", type=Path)
     dn.add_argument("--from", dest="source", type=Path, help="use this digest file instead of the latest")
+
+    aq = sub.add_parser("ask", help="ask a question about your chats")
+    aq.add_argument("question", nargs="+", help="the question, in plain words")
+    aq.add_argument("--input", type=Path)
+    aq.add_argument("--out", type=Path)
+    aq.add_argument("--model")
+    aq.add_argument("--quality", choices=sorted(QUALITY_PRESETS))
+    aq.add_argument("--backend", choices=["auto", "ollama", "llamacpp", "heuristic"])
+    aq.add_argument("--top", type=int, default=6, help="how many excerpts to retrieve")
+    aq.add_argument("--json", action="store_true")
+
+    ng = sub.add_parser("nag", help="promises that keep coming back")
+    ng.add_argument("--out", type=Path)
+    ng.add_argument("--min", type=int, default=2, dest="min_appearances", help="days it must appear")
+    ng.add_argument("--limit", type=int, default=20)
+
+    it = sub.add_parser("init", help="create the inbox, the digest folder and the config file")
 
     hs = sub.add_parser("history", help="list past digests, or search them")
     hs.add_argument("query", nargs="?", help="text to search for")
@@ -105,6 +123,7 @@ def cmd_digest(args) -> int:
         when=datetime.now().strftime("%Y-%m-%d %H:%M"),
         mode=analyzer.describe(),
         sources=len(files),
+        fmt=args.format,
     )
     path = digest.write_digest(cfg.out_dir, text, f"digest-{datetime.now().strftime('%Y-%m-%d-%H%M')}.md")
     print(text)
@@ -198,6 +217,63 @@ def cmd_history(args) -> int:
     return 0
 
 
+def cmd_ask(args) -> int:
+    cfg = load_config(
+        input_dir=args.input,
+        out_dir=args.out,
+        model=args.model,
+        quality=args.quality,
+        backend=args.backend,
+    )
+    analyzer = pick_analyzer(cfg)
+    question = " ".join(args.question)
+    result = ask.ask(cfg, question, analyzer, top_k=args.top)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0
+    print(result["answer"])
+    print()
+    print("Sources:")
+    for source in result["sources"]:
+        print(f"  {Path(source['file']).name}:{source['line']}")
+    return 0
+
+
+def cmd_nag(args) -> int:
+    cfg = load_config(out_dir=args.out)
+    rows = history.recurring(cfg.out_dir, min_appearances=args.min_appearances, limit=args.limit)
+    if not rows:
+        print("nothing has come back twice. the sloth is suspicious.")
+        return 0
+    for row in rows:
+        files = ", ".join(row["files"]) if row["files"] else "-"
+        print(f"{row['item']}")
+        print(f"    {row['days']} day(s), first {row['first']}, last {row['last']}  [{files}]")
+    return 0
+
+
+def cmd_init(args) -> int:
+    cfg = load_config()
+    cfg.input_dir.mkdir(parents=True, exist_ok=True)
+    cfg.out_dir.mkdir(parents=True, exist_ok=True)
+    created = False
+    if not CONFIG_FILE.exists():
+        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG_FILE.write_text(json.dumps({
+            "input_dir": str(cfg.input_dir),
+            "out_dir": str(cfg.out_dir),
+            "backend": "auto",
+            "quality": cfg.quality,
+            "interval": cfg.interval,
+        }, indent=2) + chr(10), encoding="utf-8")
+        created = True
+    print(f"inbox    {cfg.input_dir}")
+    print(f"digests  {cfg.out_dir}")
+    print(f"config   {CONFIG_FILE}" + (" (created)" if created else " (already there)"))
+    print("next: drop chat exports into the inbox, then run: loafer digest")
+    return 0
+
+
 def cmd_doctor(args) -> int:
     cfg = load_config()
     models: list[str] = []
@@ -251,6 +327,9 @@ def main(argv: list[str] | None = None) -> int:
         "todo": cmd_todo,
         "done": cmd_done,
         "history": cmd_history,
+        "ask": cmd_ask,
+        "nag": cmd_nag,
+        "init": cmd_init,
         "doctor": cmd_doctor,
     }
     try:

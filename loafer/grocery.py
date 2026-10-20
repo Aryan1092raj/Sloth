@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import Config
-from .llm import OllamaBackend, extract_json
+from .llm import OllamaBackend, ensure_local, extract_json
 
 SPACE = " "
 CHECKBOX = f"- [{SPACE}]{SPACE}"
@@ -66,6 +66,7 @@ def photo_to_items(cfg: Config, image_path: Path) -> dict:
     path = Path(image_path).expanduser()
     if not path.exists():
         raise FileNotFoundError(f"no such image: {path}")
+    ensure_local(cfg.ollama_host)
     backend = OllamaBackend(cfg.ollama_host, cfg.vl_model)
     if not backend.available():
         raise RuntimeError(

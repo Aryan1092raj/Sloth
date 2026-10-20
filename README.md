@@ -18,8 +18,11 @@ loafer digest --input ~/exports/chat    # read a folder of chat/email exports, w
 loafer watch  --input ~/exports/chat    # keep one digest file for the whole night, wake on new mail
 loafer todo                             # what is still open in the latest digest
 loafer done "renew domain"              # tick an item off, and remember that you did
+loafer ask "who owes me the invoice?"    # ask a question about your chats, get sources back
+loafer nag                              # the promises that keep coming back
 loafer history "invoice"                # search every digest you have ever written
 loafer grocery fridge.jpg                # photo of the fridge -> shopping list of what is missing
+loafer init                             # create the folders and the config file
 loafer doctor                           # what is running locally, and is it reachable
 ```
 
@@ -39,6 +42,7 @@ assistant needs to summarise that is exactly what you would not want to upload.
 | Can you swap models? | Yes. `LOAFER_MODEL=llama3.2:1b`, or point it at any llama.cpp server with a GGUF file. The model is a swappable component, not a hard dependency. |
 | Can you fine-tune it? | Yes. Serve your own fine-tuned weights with Ollama or llama.cpp and point `LOAFER_MODEL` at them. A digest that knows your group's shorthand is a fine-tune away. |
 | Does it cost anything to run? | Nothing. No API keys, no tokens, no quota. 20 exports take about 12 seconds on a laptop GPU. |
+| Does it ever download anything? | Never. No auto-pull, no model registry calls, no telemetry. Loafer refuses to talk to any host except localhost unless you set `LOAFER_ALLOW_REMOTE=1`. |
 | Where did the open approach beat a closed one? | A closed API needs your private logs uploaded, needs a paid key, needs to be online exactly when you want to review your morning digest, and pins you to one model's judgement. A local open-weight model can be wrong in exactly the way you can inspect, retune, or replace. |
 
 There is a second reason, and it is the reason this project exists at all: a 0.6B open model
@@ -65,6 +69,16 @@ a `loafer` command on your PATH:
 
 ```bash
 pipx install .                     # or: pip install .
+```
+
+**Loafer never downloads anything.** There is no auto-pull, no model registry call, no
+telemetry, no update check. You choose the model and pull it yourself; Loafer uses what is
+on disk and tells you if it is missing. The only host it will talk to is `localhost`, and
+it refuses anything else unless you set `LOAFER_ALLOW_REMOTE=1`:
+
+```bash
+$ LOAFER_OLLAMA_HOST=https://api.openai.com loafer digest --input exports
+error: refusing to send your data to 'api.openai.com'. Loafer only talks to localhost.
 ```
 
 For the vision command you also want a vision model:
@@ -167,6 +181,49 @@ ticked 1 item(s) in ~/loafer/digests/2026-10-20.md
 Ticks live in `~/loafer/digests/.loafer-done.json`, not in the digest, because `watch`
 rewrites the daily digest whenever new mail lands and would wipe them.
 
+### Ask your chats
+
+Retrieval is plain BM25 over windows of text, computed with the standard library. No
+embeddings, no vector database, no index to keep in sync. The local model reads the top
+windows and answers, and every answer comes with its sources:
+
+```bash
+$ loafer ask "what did we promise about the domain and the invoice?"
+The answer is that we promised to renew the domain and handle the invoice renewal this
+week. The source files are team-chat.txt.
+
+Sources:
+  team-chat.txt:9
+  email-thread.txt:1
+```
+
+With no model reachable, the same command prints the matching excerpts instead of an
+answer. Retrieval still works, nothing is invented.
+
+### The sloth nags you
+
+Promises that keep coming back are the real problem. `loafer nag` compares every digest and
+tells you what has been asked for more than once:
+
+```bash
+$ loafer nag
+renew the domain
+    3 day(s), first 2026-10-18, last 2026-10-20  [team-chat.txt]
+send Q3 numbers by Wednesday
+    3 day(s), first 2026-10-18, last 2026-10-20  [email-thread.txt]
+```
+
+### Paste it into Slack
+
+```bash
+$ loafer digest --input exports --format slack
+*Loafer digest - 2026-10-20 23:41*
+*Two lines*
+Priya is informing Ben about the finance approval pending and the board pack deadline.
+*To do*
+- [ ] follow up with finance approval (email-thread.txt)
+```
+
 ### Search your own history
 
 Every digest is a markdown file, so every digest is searchable:
@@ -208,21 +265,23 @@ this just knows where your digests live.
    ~/loafer/digests/2026-10-20.md
 ```
 
-Five rules the code follows:
+Four rules the code follows:
 
 1. **Degrade, never crash.** If the model is unreachable, the backend is a pure-stdlib
    extractive summariser. If the model replies with prose instead of JSON, the parser
    falls back the same way. You always get a digest.
 2. **The model is a component, not a dependency.** `pick_analyzer()` tries Ollama, then any
    llama.cpp OpenAI-compatible server, then the stdlib fallback. `LLMAnalyzer` and
-   `HeuristicAnalyzer` implement the same three methods.
+   `HeuristicAnalyzer` implement the same four methods.
 3. **Nothing is silently dropped.** A long export is split into overlapping chunks and every
    chunk is analysed, instead of truncating at the first 6000 characters.
-4. **No dependencies.** Standard library only: `urllib`, `json`, `pathlib`, `argparse`,
-   `re`, `collections`, `select`, `ctypes`. Nothing to `pip install`, nothing to break on a
-   new laptop.
-5. **Boring on purpose.** JSON files instead of a database, one file per day instead of a
-   feed, `grep` instead of a search index.
+4. **Local only.** Loafer refuses any host that is not localhost, and it never downloads
+   anything - no model pull, no registry call, no telemetry.
+5. **No dependencies.** Standard library only: `urllib`, `json`, `pathlib`, `argparse`,
+   `re`, `collections`, `math`, `select`, `ctypes`. Nothing to `pip install`, nothing to
+   break on a new laptop.
+6. **Boring on purpose.** JSON files instead of a database, one file per day instead of a
+   feed, BM25 instead of a vector store, `grep` instead of a search index.
 
 ### Quality presets
 
@@ -259,6 +318,7 @@ then the default.
 | `LOAFER_STAPLES` | 12 staples | comma separated list for `grocery` |
 | `LOAFER_INTERVAL` | `300` | seconds between polls in `watch` |
 | `LOAFER_SINCE` | none | ignore anything older than this |
+| `LOAFER_ALLOW_REMOTE` | unset | allow a non-localhost model host (off by default) |
 
 `loafer doctor --json` prints the same picture for scripts.
 
@@ -302,8 +362,8 @@ them. Nothing in the code knows or cares which weights are behind the endpoint.
 
 ```text
 Sloth/
-  loafer/            the package: cli, config, collect, llm, fallback, digest, watch, todo, history, grocery
-  tests/             35 unittest cases, stdlib only, no network
+  loafer/            the package: cli, config, collect, llm, fallback, digest, watch, todo, history, ask, grocery
+  tests/             46 unittest cases, stdlib only, no network
   examples/          a chat export and an email thread to try it on
   pyproject.toml     zero dependencies, installs a `loafer` command
   README.md          this file
@@ -315,8 +375,8 @@ kept out of git on purpose; this README is the published surface.
 ## Roadmap
 
 - write ticked items back into a plain markdown todo file on every digest, not on demand
-- per-thread digests that accumulate into a searchable local history
 - an `--email` mode that reads a local maildir export instead of a folder of text files
+- `nag` should also notice promises that appear in a chat but never in a digest
 - optional round-trip: mark a promise as done in the source app if it exposes an API
 
 ## License

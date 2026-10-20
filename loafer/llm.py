@@ -5,14 +5,22 @@ Everything here talks to localhost. No API keys, no telemetry, no egress.
 
 from __future__ import annotations
 
+import http.client
 import json
+import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from string import Template
 from typing import Any
 
 from . import fallback
 from .config import MODEL_PREFERENCE, Config
+
+ANSWER_SYSTEM = (
+    "You answer questions using only the excerpts you are given. "
+    "If the excerpts do not contain the answer, say so plainly."
+)
 
 SYSTEM_PROMPT = (
     "You extract structured facts from chat logs and notes. "
@@ -54,6 +62,33 @@ class BackendError(RuntimeError):
     pass
 
 
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
+def hostname_of(url: str) -> str:
+    parsed = urllib.parse.urlparse(url if "://" in url else "http://" + url)
+    return (parsed.hostname or "").lower()
+
+
+def ensure_local(url: str) -> None:
+    """Refuse to send anything off this machine, unless the user insists.
+
+    Loafer never downloads a model and never phones home. The only host it is willing
+    to talk to is the local model server. Point it at a remote API by accident and it
+    says no instead of quietly uploading your chat logs.
+    """
+    host = hostname_of(url)
+    if host in LOCAL_HOSTS or host.startswith("127."):
+        return
+    override = os.environ.get("LOAFER_ALLOW_REMOTE", "").strip().lower()
+    if override not in ("", "0", "false", "no"):
+        return
+    raise BackendError(
+        f"refusing to send your data to '{host}'. Loafer only talks to localhost. "
+        "Set LOAFER_ALLOW_REMOTE=1 if you really mean it."
+    )
+
+
 def _request(url: str, payload: dict | None = None, *, timeout: float = 180.0) -> Any:
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(
@@ -71,6 +106,8 @@ def _request(url: str, payload: dict | None = None, *, timeout: float = 180.0) -
         raise BackendError(f"HTTP {exc.code} from {url}: {detail}") from exc
     except urllib.error.URLError as exc:
         raise BackendError(f"cannot reach {url}: {exc.reason}") from exc
+    except (http.client.HTTPException, OSError) as exc:
+        raise BackendError(f"cannot reach {url}: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise BackendError(f"bad JSON from {url}: {exc}") from exc
 
@@ -254,6 +291,10 @@ class Analyzer:
     def merge(self, results: list[dict]) -> dict:
         raise NotImplementedError
 
+    def answer(self, prompt: str) -> str:
+        """Answer a question from retrieved excerpts. Empty string means no answer."""
+        raise NotImplementedError
+
     def describe(self) -> str:
         return self.name
 
@@ -312,6 +353,16 @@ class LLMAnalyzer(Analyzer):
         return merged
 
 
+    def answer(self, prompt: str) -> str:
+        raw = self.backend.chat(
+            ANSWER_SYSTEM,
+            prompt,
+            max_tokens=self.max_tokens,
+            temperature=0.1,
+        )
+        return raw.strip()
+
+
 class HeuristicAnalyzer(Analyzer):
     name = "heuristic"
 
@@ -321,6 +372,10 @@ class HeuristicAnalyzer(Analyzer):
     def merge(self, results: list[dict]) -> dict:
         return fallback.merge(results)
 
+    def answer(self, prompt: str) -> str:
+        # no model, no answer: the caller falls back to showing the excerpts
+        return ""
+
 
 def pick_analyzer(cfg: Config) -> Analyzer:
     """auto -> ollama -> llamacpp -> heuristic. Never raises, never blocks on the network for long."""
@@ -329,6 +384,7 @@ def pick_analyzer(cfg: Config) -> Analyzer:
         return HeuristicAnalyzer()
 
     if choice in ("auto", "ollama"):
+        ensure_local(cfg.ollama_host)
         backend = OllamaBackend(cfg.ollama_host, cfg.model)
         if backend.available():
             model = backend.pick_model()
@@ -338,6 +394,7 @@ def pick_analyzer(cfg: Config) -> Analyzer:
             raise BackendError(f"no ollama model reachable at {cfg.ollama_host}")
 
     if choice in ("auto", "llamacpp"):
+        ensure_local(cfg.llamacpp_url)
         backend = LlamaCppBackend(cfg.llamacpp_url, cfg.model)
         if backend.available():
             model = backend.pick_model()
