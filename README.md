@@ -133,11 +133,11 @@ The template is shared, so the user should use it as instructed.
 
 ## To do
 
-- [ ] confirm finance approval (email-thread.txt)
-- [ ] send Q3 numbers by Wednesday (email-thread.txt)
-- [ ] check availability (team-chat.txt)
-- [ ] book table (team-chat.txt)
-- [ ] renew domain (team-chat.txt)
+- [ ] confirm finance approval (email-thread.txt:L8)
+- [ ] send Q3 numbers by Wednesday (email-thread.txt:L11)
+- [ ] check availability (team-chat.txt:L7)
+- [ ] book table (team-chat.txt:L6)
+- [ ] renew domain (team-chat.txt:L9)
 
 ## Threads
 
@@ -178,7 +178,9 @@ ticked 1 item(s) in ~/loafer/digests/2026-10-20.md
   book table
 ```
 
-Ticks live in `~/loafer/digests/.loafer-done.json`, not in the digest, because `watch`
+Each checklist item includes the best matching source line when one can be found, so a
+promise can be verified without rereading the whole export. Ticks live in
+`~/loafer/digests/.loafer-done.json`, not in the digest, because `watch`
 rewrites the daily digest whenever new mail lands and would wipe them.
 
 ### Ask your chats
@@ -275,12 +277,14 @@ Four rules the code follows:
    `HeuristicAnalyzer` implement the same four methods.
 3. **Nothing is silently dropped.** A long export is split into overlapping chunks and every
    chunk is analysed, instead of truncating at the first 6000 characters.
-4. **Local only.** Loafer refuses any host that is not localhost, and it never downloads
+4. **Traceable.** Checklist items point to the source file and line when the match is clear,
+   so the model's summary stays auditable instead of becoming a new source of truth.
+5. **Local only.** Loafer refuses any host that is not localhost, and it never downloads
    anything - no model pull, no registry call, no telemetry.
-5. **No dependencies.** Standard library only: `urllib`, `json`, `pathlib`, `argparse`,
+6. **No dependencies.** Standard library only: `urllib`, `json`, `pathlib`, `argparse`,
    `re`, `collections`, `math`, `select`, `ctypes`. Nothing to `pip install`, nothing to
    break on a new laptop.
-6. **Boring on purpose.** JSON files instead of a database, one file per day instead of a
+7. **Boring on purpose.** JSON files instead of a database, one file per day instead of a
    feed, BM25 instead of a vector store, `grep` instead of a search index.
 
 ### Quality presets

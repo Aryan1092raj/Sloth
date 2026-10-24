@@ -252,9 +252,23 @@ class TestChunking(unittest.TestCase):
 class TestChecklist(unittest.TestCase):
     def test_actions_carry_their_source(self):
         rows = digest.checklist([
-            {"source": "/tmp/team-chat.txt", "actions": ["renew the domain"]},
+            {
+                "source": "/tmp/team-chat.txt",
+                "actions": ["renew the domain"],
+                "action_lines": {"renew the domain": 9},
+            },
         ], [])
-        self.assertEqual(rows, ["renew the domain (team-chat.txt)"])
+        self.assertEqual(rows, ["renew the domain (team-chat.txt:L9)"])
+
+    def test_action_line_finds_the_source_sentence(self):
+        line = digest._action_line(
+            "Ana: please chase finance today\nBen: I will ping Priya now\n",
+            "chase finance",
+        )
+        self.assertEqual(line, 1)
+
+    def test_action_line_ignores_weak_matches(self):
+        self.assertIsNone(digest._action_line("hello there\n", "send the report"))
 
     def test_specific_action_wins_over_vague_one(self):
         rows = digest.checklist(

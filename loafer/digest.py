@@ -73,12 +73,16 @@ def analyze_files(cfg: Config, files: list[Path], analyzer: Analyzer) -> list[di
         else:
             chunks = [collect.truncate(text, cfg.max_chars)]
         chunk_results = [analyzer.analyze(chunk, source) for chunk in chunks]
-        results.append(merge_chunks(chunk_results) if len(chunk_results) > 1 else chunk_results[0])
+        result = merge_chunks(chunk_results) if len(chunk_results) > 1 else chunk_results[0]
+        result["action_lines"] = {
+            action: _action_line(text, action) for action in result.get("actions", [])
+        }
+        results.append(result)
     return results
 
 
 def checklist(results: list[dict], merged_actions: list[str]) -> list[str]:
-    """To-do rows: per-thread actions first with their source, then anything only the merge found."""
+    """To-do rows with a source file and best matching source line."""
     rows: list[tuple[str, str | None]] = []
     keys: list[str] = []
 
@@ -98,10 +102,33 @@ def checklist(results: list[dict], merged_actions: list[str]) -> list[str]:
     for item in results:
         label = Path(str(item.get("source", ""))).name or None
         for action in item.get("actions", []):
-            add(action, label)
+            line = item.get("action_lines", {}).get(action)
+            add(action, f"{label}:L{line}" if label and line else label)
     for action in merged_actions:
         add(action, None)
     return [text + (f" ({label})" if label else "") for text, label in rows]
+
+
+def _action_line(text: str, action: str) -> int | None:
+    """Find the most likely source line for an extracted action."""
+    terms = [term for term in re.findall(r"[a-z0-9']+", action.lower()) if len(term) > 2]
+    if not terms:
+        return None
+
+    best: tuple[int, int] | None = None
+    for number, line in enumerate(text.splitlines(), 1):
+        words = set(re.findall(r"[a-z0-9']+", line.lower()))
+        score = sum(
+            1
+            for term in terms
+            if term in words or (term.endswith("s") and term[:-1] in words)
+        )
+        if score and (best is None or score > best[0]):
+            best = (score, number)
+
+    if best is None or (best[0] < 2 and len(terms) > 1):
+        return None
+    return best[1]
 
 
 def build_digest(cfg: Config, files: list[Path], analyzer: Analyzer) -> dict:
